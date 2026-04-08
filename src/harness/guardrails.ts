@@ -10,6 +10,7 @@ export class Guardrails {
   private searchQueries: string[] = [];
   private crawledUrls: string[] = [];
   private turnCount: number = 0;
+  private _reportWritten: boolean = false;
 
   recordSearch(query: string): void {
     this.searchQueries.push(query);
@@ -67,6 +68,14 @@ export class Guardrails {
     }
 
     return { allowed: true, warning: null, forceMessage: null };
+  }
+
+  recordReportWritten(): void {
+    this._reportWritten = true;
+  }
+
+  get reportWritten(): boolean {
+    return this._reportWritten;
   }
 
   getCrawledUrls(): string[] {

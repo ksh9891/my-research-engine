@@ -73,7 +73,23 @@ export async function runReactLoop(query: string): Promise<{
     const functionCalls = response.functionCalls;
 
     if (!functionCalls || functionCalls.length === 0) {
-      // 텍스트 응답 = 루프 종료
+      // 텍스트 응답이 왔지만 보고서가 아직 작성되지 않은 경우 → 강제 요청
+      if (!guardrails.reportWritten) {
+        console.log("  ⚠️ 하네스 개입: 보고서 없이 종료 시도 → write_report 강제 요청");
+
+        const modelMsg: Content = {
+          role: "model",
+          parts: [{ text: response.text ?? "" }],
+        };
+        messages.push(modelMsg);
+        messages.push({
+          role: "user",
+          parts: [{ text: "반드시 write_report 도구를 호출하여 보고서를 파일로 저장하세요. 위에서 작성한 내용을 그대로 write_report의 content에 전달하세요." }],
+        });
+        continue;
+      }
+
+      // 보고서 작성 완료 → 정상 종료
       finalSummary = response.text ?? "";
 
       const turnLog: TurnLog = {
@@ -127,6 +143,7 @@ export async function runReactLoop(query: string): Promise<{
       if (toolName === "write_report" && result.success) {
         reportPath = result.data;
         logger.setReportPath(reportPath);
+        guardrails.recordReportWritten();
       }
 
       const resultText = result.success
