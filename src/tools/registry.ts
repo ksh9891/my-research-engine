@@ -71,7 +71,8 @@ export const toolDefinitions: FunctionDeclaration[] = [
 
 export async function executeTool(
   name: string,
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
+  context?: { crawledUrls?: string[] }
 ): Promise<ToolResult> {
   switch (name) {
     case "web_search":
@@ -88,7 +89,8 @@ export async function executeTool(
       return writeReport(
         input.title as string,
         input.content as string,
-        input.sources as string[]
+        input.sources as string[],
+        context?.crawledUrls
       );
     default:
       return { success: false, data: "", error: `Unknown tool: ${name}` };

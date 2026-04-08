@@ -137,7 +137,9 @@ export async function runReactLoop(query: string): Promise<{
       } else if (toolName === "crawl_page") {
         guardrails.recordCrawl(input.url as string);
       }
-      const result = await executeTool(toolName, input);
+      const result = await executeTool(toolName, input, {
+        crawledUrls: guardrails.getCrawledUrls(),
+      });
 
       // write_report 성공 시 경로 저장
       if (toolName === "write_report" && result.success) {
