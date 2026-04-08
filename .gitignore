@@ -3,3 +3,5 @@ dist/
 .env
 reports/
 logs/
+.DS_Store
+.claude/
