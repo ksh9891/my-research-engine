@@ -9,6 +9,7 @@ export interface GuardrailCheck {
 export class Guardrails {
   private searchQueries: string[] = [];
   private crawledUrls: string[] = [];
+  private crawledContent: Map<string, string> = new Map();
   private turnCount: number = 0;
   private _reportWritten: boolean = false;
 
@@ -16,8 +17,11 @@ export class Guardrails {
     this.searchQueries.push(query);
   }
 
-  recordCrawl(url: string): void {
+  recordCrawl(url: string, content?: string): void {
     this.crawledUrls.push(url);
+    if (content) {
+      this.crawledContent.set(url, content);
+    }
   }
 
   incrementTurn(): void {
@@ -80,5 +84,9 @@ export class Guardrails {
 
   getCrawledUrls(): string[] {
     return [...this.crawledUrls];
+  }
+
+  getCrawledContent(): Map<string, string> {
+    return new Map(this.crawledContent);
   }
 }

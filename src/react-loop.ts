@@ -52,16 +52,36 @@ export async function runReactLoop(query: string): Promise<{
       await contextManager.compress(messages);
     messages = compressedMessages;
 
-    // [execute] Gemini API 호출
-    const response = await ai.models.generateContent({
-      model: config.model,
-      contents: messages,
-      config: {
-        systemInstruction: systemPrompt,
-        tools: [{ functionDeclarations: toolDefinitions }],
-        maxOutputTokens: config.maxTokensPerResponse,
-      },
-    });
+    // [execute] Gemini API 호출 (rate limit 대응 포함)
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: config.model,
+        contents: messages,
+        config: {
+          systemInstruction: systemPrompt,
+          tools: [{ functionDeclarations: toolDefinitions }],
+          maxOutputTokens: config.maxTokensPerResponse,
+        },
+      });
+    } catch (err) {
+      const errMsg = (err as Error).message ?? String(err);
+      if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED")) {
+        console.log("\n  ⏳ API rate limit 도달. 50초 대기 후 재시도...");
+        await new Promise((r) => setTimeout(r, 50_000));
+        response = await ai.models.generateContent({
+          model: config.model,
+          contents: messages,
+          config: {
+            systemInstruction: systemPrompt,
+            tools: [{ functionDeclarations: toolDefinitions }],
+            maxOutputTokens: config.maxTokensPerResponse,
+          },
+        });
+      } else {
+        throw err;
+      }
+    }
 
     // 토큰 추적
     const usage = response.usageMetadata;
@@ -134,12 +154,20 @@ export async function runReactLoop(query: string): Promise<{
       // 가드레일에 기록
       if (toolName === "web_search") {
         guardrails.recordSearch(input.query as string);
-      } else if (toolName === "crawl_page") {
-        guardrails.recordCrawl(input.url as string);
       }
+
       const result = await executeTool(toolName, input, {
         crawledUrls: guardrails.getCrawledUrls(),
+        crawledContent: guardrails.getCrawledContent(),
       });
+
+      // 크롤링 성공 시 본문도 함께 기록
+      if (toolName === "crawl_page") {
+        guardrails.recordCrawl(
+          input.url as string,
+          result.success ? result.data : undefined
+        );
+      }
 
       // write_report 성공 시 경로 저장
       if (toolName === "write_report" && result.success) {
