@@ -1,45 +1,24 @@
+import { tavily } from "@tavily/core";
 import { config } from "../config.js";
 import type { SearchResult, ToolResult } from "../types.js";
+
+const tvly = tavily({ apiKey: config.tavilyApiKey });
 
 export async function webSearch(
   query: string,
   maxResults: number = config.searchMaxResults
 ): Promise<ToolResult> {
-  const url = new URL("https://api.search.brave.com/res/v1/web/search");
-  url.searchParams.set("q", query);
-  url.searchParams.set("count", String(Math.min(maxResults, 20)));
-
   try {
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: "application/json",
-        "Accept-Encoding": "gzip",
-        "X-Subscription-Token": config.braveApiKey,
-      },
+    const response = await tvly.search(query, {
+      maxResults: Math.min(maxResults, 10),
+      searchDepth: "basic",
     });
 
-    if (!response.ok) {
-      return {
-        success: false,
-        data: "",
-        error: `Brave API error: ${response.status} ${response.statusText}`,
-      };
-    }
-
-    const json = await response.json();
-    const webResults = (json as Record<string, unknown>).web as
-      | { results: unknown[] }
-      | undefined;
-    const items = webResults?.results ?? [];
-
-    const results: SearchResult[] = items.map((item: unknown) => {
-      const i = item as Record<string, string>;
-      return {
-        url: i.url,
-        title: i.title,
-        snippet: i.description ?? "",
-      };
-    });
+    const results: SearchResult[] = response.results.map((item) => ({
+      url: item.url,
+      title: item.title,
+      snippet: item.content?.slice(0, 200) ?? "",
+    }));
 
     const formatted = results
       .map(

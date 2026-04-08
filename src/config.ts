@@ -3,7 +3,7 @@ dotenv.config();
 
 export const config = {
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
-  braveApiKey: process.env.BRAVE_API_KEY ?? "",
+  tavilyApiKey: process.env.TAVILY_API_KEY ?? "",
   model: "claude-sonnet-4-20250514" as const,
   maxTurns: 15,
   maxTokensPerResponse: 4096,
