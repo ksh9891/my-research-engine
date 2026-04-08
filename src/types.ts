@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { Content } from "@google/genai";
 
 export interface SearchResult {
   url: string;
@@ -34,4 +34,4 @@ export interface SessionLog {
   reportPath: string | null;
 }
 
-export type Messages = Anthropic.MessageParam[];
+export type Messages = Content[];

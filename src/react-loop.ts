@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI, Content, FunctionCall } from "@google/genai";
 import { config } from "./config.js";
 import { toolDefinitions, executeTool } from "./tools/registry.js";
 import { ContextManager } from "./harness/context-manager.js";
@@ -8,7 +8,7 @@ import { Guardrails } from "./harness/guardrails.js";
 import { Logger } from "./harness/logger.js";
 import type { Messages, TurnLog } from "./types.js";
 
-const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
+const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
 function loadSystemPrompt(): string {
   const promptPath = join(process.cwd(), "prompts", "system.md");
@@ -25,7 +25,9 @@ export async function runReactLoop(query: string): Promise<{
   const guardrails = new Guardrails();
   const logger = new Logger(query);
 
-  let messages: Messages = [{ role: "user", content: query }];
+  let messages: Messages = [
+    { role: "user", parts: [{ text: query }] },
+  ];
 
   console.log(`\n🔍 리서치 시작: "${query}"\n`);
 
@@ -39,10 +41,9 @@ export async function runReactLoop(query: string): Promise<{
     // [before] 가드레일 체크
     const guardrailCheck = guardrails.check();
     if (!guardrailCheck.allowed) {
-      // 강제 종료: 보고서 작성 요청 메시지 주입
       messages.push({
         role: "user",
-        content: guardrailCheck.forceMessage!,
+        parts: [{ text: guardrailCheck.forceMessage! }],
       });
     }
 
@@ -51,26 +52,29 @@ export async function runReactLoop(query: string): Promise<{
       await contextManager.compress(messages);
     messages = compressedMessages;
 
-    // [execute] Claude API 호출
-    const response = await anthropic.messages.create({
+    // [execute] Gemini API 호출
+    const response = await ai.models.generateContent({
       model: config.model,
-      max_tokens: config.maxTokensPerResponse,
-      system: systemPrompt,
-      tools: toolDefinitions,
-      messages,
+      contents: messages,
+      config: {
+        systemInstruction: systemPrompt,
+        tools: [{ functionDeclarations: toolDefinitions }],
+        maxOutputTokens: config.maxTokensPerResponse,
+      },
     });
 
     // 토큰 추적
-    contextManager.updateTokens(
-      response.usage.input_tokens,
-      response.usage.output_tokens
-    );
+    const usage = response.usageMetadata;
+    const inputTokens = usage?.promptTokenCount ?? 0;
+    const outputTokens = usage?.candidatesTokenCount ?? 0;
+    contextManager.updateTokens(inputTokens, outputTokens);
 
-    // stop_reason에 따라 분기
-    if (response.stop_reason === "end_turn") {
+    // function call 확인
+    const functionCalls = response.functionCalls;
+
+    if (!functionCalls || functionCalls.length === 0) {
       // 텍스트 응답 = 루프 종료
-      const textBlock = response.content.find((b) => b.type === "text");
-      finalSummary = textBlock ? textBlock.text : "";
+      finalSummary = response.text ?? "";
 
       const turnLog: TurnLog = {
         turn: turnNumber,
@@ -78,8 +82,8 @@ export async function runReactLoop(query: string): Promise<{
         toolUsed: null,
         toolInput: null,
         tokens: {
-          input: response.usage.input_tokens,
-          output: response.usage.output_tokens,
+          input: inputTokens,
+          output: outputTokens,
           cumulative: contextManager.getCumulativeTokens(),
         },
         contextCompressed: compressed,
@@ -89,77 +93,80 @@ export async function runReactLoop(query: string): Promise<{
       break;
     }
 
-    if (response.stop_reason === "tool_use") {
-      // 도구 호출 처리
-      const assistantMessage: Anthropic.MessageParam = {
-        role: "assistant",
-        content: response.content,
-      };
-      messages.push(assistantMessage);
+    // 도구 호출 처리
+    // model의 응답을 메시지에 추가
+    const modelMessage: Content = {
+      role: "model",
+      parts: functionCalls.map((fc) => ({
+        functionCall: { name: fc.name, args: fc.args },
+      })),
+    };
+    messages.push(modelMessage);
 
-      const toolUseBlocks = response.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
-      );
+    // 각 function call 실행 및 결과 수집
+    const functionResponses: Content = {
+      role: "user",
+      parts: [],
+    };
 
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const fc of functionCalls) {
+      const input = (fc.args ?? {}) as Record<string, unknown>;
 
-      for (const toolUse of toolUseBlocks) {
-        const input = toolUse.input as Record<string, unknown>;
+      // 가드레일에 기록
+      const toolName = fc.name ?? "unknown";
 
-        // 가드레일에 기록
-        if (toolUse.name === "web_search") {
-          guardrails.recordSearch(input.query as string);
-        } else if (toolUse.name === "crawl_page") {
-          guardrails.recordCrawl(input.url as string);
-        }
+      // 가드레일에 기록
+      if (toolName === "web_search") {
+        guardrails.recordSearch(input.query as string);
+      } else if (toolName === "crawl_page") {
+        guardrails.recordCrawl(input.url as string);
+      }
+      const result = await executeTool(toolName, input);
 
-        // 도구 실행
-        const result = await executeTool(toolUse.name, input);
-
-        // write_report 성공 시 경로 저장
-        if (toolUse.name === "write_report" && result.success) {
-          reportPath = result.data;
-          logger.setReportPath(reportPath);
-        }
-
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: toolUse.id,
-          content: result.success
-            ? result.data
-            : `오류: ${result.error}`,
-        });
-
-        // 루프 감지 경고 주입
-        const postCheck = guardrails.check();
-        const loopWarning = postCheck.warning !== null;
-
-        const turnLog: TurnLog = {
-          turn: turnNumber,
-          timestamp: new Date().toISOString(),
-          toolUsed: toolUse.name,
-          toolInput: input,
-          tokens: {
-            input: response.usage.input_tokens,
-            output: response.usage.output_tokens,
-            cumulative: contextManager.getCumulativeTokens(),
-          },
-          contextCompressed: compressed,
-          loopWarning,
-        };
-        logger.logTurn(turnLog);
-
-        if (postCheck.warning) {
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: toolUse.id,
-            content: `⚠️ 하네스 경고: ${postCheck.warning}`,
-          });
-        }
+      // write_report 성공 시 경로 저장
+      if (toolName === "write_report" && result.success) {
+        reportPath = result.data;
+        logger.setReportPath(reportPath);
       }
 
-      messages.push({ role: "user", content: toolResults });
+      const resultText = result.success
+        ? result.data
+        : `오류: ${result.error}`;
+
+      functionResponses.parts!.push({
+        functionResponse: {
+          name: toolName,
+          response: { result: resultText },
+        },
+      });
+
+      // 루프 감지 경고
+      const postCheck = guardrails.check();
+      const loopWarning = postCheck.warning !== null;
+
+      const turnLog: TurnLog = {
+        turn: turnNumber,
+        timestamp: new Date().toISOString(),
+        toolUsed: toolName,
+        toolInput: input,
+        tokens: {
+          input: inputTokens,
+          output: outputTokens,
+          cumulative: contextManager.getCumulativeTokens(),
+        },
+        contextCompressed: compressed,
+        loopWarning,
+      };
+      logger.logTurn(turnLog);
+
+      if (postCheck.warning) {
+        functionResponses.parts!.push({
+          text: `⚠️ 하네스 경고: ${postCheck.warning}`,
+        });
+      }
     }
+
+    messages.push(functionResponses);
   }
 
   // 로그 저장

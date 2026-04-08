@@ -2,12 +2,12 @@ import dotenv from "dotenv";
 dotenv.config();
 
 export const config = {
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  geminiApiKey: process.env.GEMINI_API_KEY ?? "",
   tavilyApiKey: process.env.TAVILY_API_KEY ?? "",
-  model: "claude-sonnet-4-20250514" as const,
+  model: "gemini-2.5-flash",
   maxTurns: 15,
   maxTokensPerResponse: 4096,
-  contextWindow: 200_000,
+  contextWindow: 1_000_000,
   compressionThresholdLow: 0.5,
   compressionThresholdHigh: 0.8,
   crawlMaxLength: 5000,

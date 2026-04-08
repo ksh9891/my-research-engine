@@ -1,8 +1,8 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI, Content } from "@google/genai";
 import { config } from "../config.js";
 import type { Messages } from "../types.js";
 
-const anthropic = new Anthropic({ apiKey: config.anthropicApiKey });
+const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
 
 export class ContextManager {
   private cumulativeTokens: number = 0;
@@ -33,44 +33,32 @@ export class ContextManager {
     }
 
     if (level === "partial") {
-      return { messages: await this.compressToolResults(messages), compressed: true };
+      return { messages: await this.compressLongContent(messages), compressed: true };
     }
 
     return { messages: await this.compressFull(messages), compressed: true };
   }
 
-  private async compressToolResults(messages: Messages): Promise<Messages> {
+  private async compressLongContent(messages: Messages): Promise<Messages> {
     const compressed: Messages = [];
 
     for (const msg of messages) {
-      if (
-        msg.role === "user" &&
-        Array.isArray(msg.content) &&
-        msg.content.length > 0
-      ) {
-        const blocks = msg.content as Anthropic.ToolResultBlockParam[];
-        const hasLongToolResult = blocks.some(
-          (b) =>
-            b.type === "tool_result" &&
-            typeof b.content === "string" &&
-            b.content.length > 1000
+      if (msg.parts) {
+        const hasLong = msg.parts.some(
+          (p) => "text" in p && typeof p.text === "string" && p.text.length > 1000
         );
 
-        if (hasLongToolResult) {
-          const summarizedBlocks = await Promise.all(
-            blocks.map(async (b) => {
-              if (
-                b.type === "tool_result" &&
-                typeof b.content === "string" &&
-                b.content.length > 1000
-              ) {
-                const summary = await this.summarize(b.content);
-                return { ...b, content: `[요약] ${summary}` };
+        if (hasLong) {
+          const summarizedParts = await Promise.all(
+            msg.parts.map(async (p) => {
+              if ("text" in p && typeof p.text === "string" && p.text.length > 1000) {
+                const summary = await this.summarize(p.text);
+                return { text: `[요약] ${summary}` };
               }
-              return b;
+              return p;
             })
           );
-          compressed.push({ role: "user", content: summarizedBlocks });
+          compressed.push({ role: msg.role, parts: summarizedParts });
         } else {
           compressed.push(msg);
         }
@@ -90,48 +78,42 @@ export class ContextManager {
 
     const oldContent = oldMessages
       .map((m) => {
-        if (typeof m.content === "string") return m.content;
-        if (Array.isArray(m.content)) {
-          return m.content
-            .map((b) => {
-              if ("text" in b && typeof b.text === "string") return b.text;
-              if ("content" in b && typeof b.content === "string") return b.content;
-              return "";
-            })
-            .join(" ");
-        }
-        return "";
+        if (!m.parts) return "";
+        return m.parts
+          .map((p) => {
+            if ("text" in p && typeof p.text === "string") return p.text;
+            if ("functionCall" in p) return `[도구 호출: ${(p as Record<string, unknown>).functionCall}]`;
+            if ("functionResponse" in p) {
+              const fr = p as { functionResponse: { name: string; response: unknown } };
+              return `[도구 결과: ${fr.functionResponse.name}]`;
+            }
+            return "";
+          })
+          .join(" ");
       })
       .join("\n");
 
     const summary = await this.summarize(oldContent);
 
-    const summaryMessage: Anthropic.MessageParam = {
+    const summaryMessage: Content = {
       role: "user",
-      content: `[이전 리서치 요약]\n${summary}`,
+      parts: [{ text: `[이전 리서치 요약]\n${summary}` }],
     };
 
-    return [
-      summaryMessage,
-      { role: "assistant", content: "이전 리서치 내용을 확인했습니다. 계속 진행하겠습니다." },
-      ...recentMessages,
-    ];
+    const ackMessage: Content = {
+      role: "model",
+      parts: [{ text: "이전 리서치 내용을 확인했습니다. 계속 진행하겠습니다." }],
+    };
+
+    return [summaryMessage, ackMessage, ...recentMessages];
   }
 
   private async summarize(text: string): Promise<string> {
-    const response = await anthropic.messages.create({
+    const response = await ai.models.generateContent({
       model: config.model,
-      max_tokens: 500,
-      messages: [
-        {
-          role: "user",
-          content: `다음 텍스트의 핵심 내용을 300자 이내로 요약하세요. 출처 URL이 있으면 보존하세요.\n\n${text.slice(0, 10000)}`,
-        },
-      ],
+      contents: `다음 텍스트의 핵심 내용을 300자 이내로 요약하세요. 출처 URL이 있으면 보존하세요.\n\n${text.slice(0, 10000)}`,
     });
 
-    const block = response.content[0];
-    if (block.type === "text") return block.text;
-    return text.slice(0, 300);
+    return response.text ?? text.slice(0, 300);
   }
 }
