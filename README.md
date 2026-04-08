@@ -189,16 +189,6 @@ my-research-engine/
 | 웹 검색 | Tavily API (`@tavily/core`) -- 무료 월 1,000건 |
 | 크롤링 | cheerio (HTML 파싱) |
 
-## 학습 참고 자료
-
-이 프로젝트는 아래 글들을 학습한 후 만들었습니다:
-
-1. [하네스 엔지니어링 개념 (WikiDocs)](https://wikidocs.net/blog/@jaehong/9481/)
-2. [HaaS - Harness as a Service (vtrivedy)](https://www.vtrivedy.com/posts/claude-code-sdk-haas-harness-as-a-service)
-3. [The Anatomy of an Agent Harness (LangChain)](https://blog.langchain.com/the-anatomy-of-an-agent-harness/)
-4. [Improving Deep Agents with Harness Engineering (LangChain)](https://blog.langchain.com/improving-deep-agents-with-harness-engineering/)
-5. [My AI Adoption Journey (mitchellh)](https://mitchellh.com/writing/my-ai-adoption-journey)
-
 ## Future Enhancements
 
 현재는 단일 에이전트 + 아티클 리서치에 집중하고 있으며, 이후 단계적으로 확장할 계획입니다:
